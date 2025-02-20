@@ -1,19 +1,11 @@
-FROM node:18-alpine
-
-# Define build argument for root password
-ARG ROOT_PASSWORD
-RUN if [ -z "$ROOT_PASSWORD" ] ; then echo "Root password not set" && exit 1; fi
-
-# Set root password from build argument
-RUN echo "root:${ROOT_PASSWORD}" | chpasswd
+FROM --platform=linux/amd64 node:18.17.1-alpine
 
 WORKDIR /app
 
 # Install basic tools (optional but useful)
 RUN apk add --no-cache \
     bash \
-    curl \
-    openssh
+    curl 
 
 COPY package*.json ./
 RUN npm install

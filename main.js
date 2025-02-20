@@ -5,11 +5,10 @@ const schedule = require('node-schedule');
 const getDailyFeedsFromJira = async () => {
     try {
         const jiraToken = process.env.JIRA_TOKEN;
-        const jiraUri = process.env.JIRA_URI;
         const jiraServiceDomain = process.env.JIRA_SERVICE_DOMAIN
         const jiraProjectKey = process.env.JIRA_PROJECT_KEY
         
-        if (!jiraToken || !jiraUri) {
+        if (!jiraToken || !jiraServiceDomain) {
             throw new Error('Jira configuration missing');
         }
 
@@ -25,14 +24,14 @@ const getDailyFeedsFromJira = async () => {
 
         // Fetch both new and transitioned tickets
         const [newTickets, transitionedTickets] = await Promise.all([
-            fetch(`${jiraUri}/rest/api/3/search?jql=${encodeURIComponent(newTicketsJQL)}`, {
+            fetch(`${jiraServiceDomain}/rest/api/3/search?jql=${encodeURIComponent(newTicketsJQL)}`, {
                 method: 'GET',
                 headers: {
                     'Authorization': `Basic ${Buffer.from(jiraToken).toString('base64')}`,
                     'Accept': 'application/json'
                 }
             }),
-            fetch(`${jiraUri}/rest/api/3/search?jql=${encodeURIComponent(transitionedTicketsJQL)}`, {
+            fetch(`${jiraServiceDomain}/rest/api/3/search?jql=${encodeURIComponent(transitionedTicketsJQL)}`, {
                 method: 'GET',
                 headers: {
                     'Authorization': `Basic ${Buffer.from(jiraToken).toString('base64')}`,
@@ -111,7 +110,13 @@ const getDailyFeedsFromJira = async () => {
         // Create a formatted message for Mattermost
         const message = {
             text: `
-# 📊 Daily Jira Update (${jqlDateFormat(today)})
+# 📊 Daily Jira Update (${today.toLocaleDateString('en-US', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric'
+}).toUpperCase()})
+
+---
 
 ## 🆕 New Tickets (${result.newTickets.length})
 | ID | Type | Priority | Summary | Assignee | Status | Tag |
@@ -119,6 +124,8 @@ const getDailyFeedsFromJira = async () => {
 ${result.newTickets.map(ticket => 
     `| [${ticket.key}](${jiraServiceDomain}/browse/${ticket.key}) | ${getIssueTypeEmoji(ticket.issueType)} ${ticket.issueType} | ${getPriorityEmoji(ticket.priority)} ${ticket.priority} | ${ticket.summary} | 👤 ${ticket.assignee} | 🏷️ ${ticket.status} | ${getSprintTag(ticket.sprint)} |`
 ).join('\n')}
+
+---
 
 ## 🔄 Status Changes (${result.transitionedTickets.length})
 | ID | Type | Priority | Summary | Assignee | Current Status | Tag |
@@ -182,13 +189,14 @@ const postMessageToMatterMostChannel = async (channel, payload) => {
     }
 };
 
-// Schedule the job to run at 9 AM every working day (Monday to Friday)
+// Schedule the job to run at 11:45:00 UTC
 const scheduleJiraFeedJob = () => {
     const rule = new schedule.RecurrenceRule();
-    rule.hour = 16;    // 9 AM
-    rule.minute = 50;  // At minute 0
+    rule.hour = 14;    // 11 AM UTC
+    rule.minute = 0;  // 30 minutes
+    rule.second = 0;   // 0 seconds
     rule.dayOfWeek = [1, 2, 3, 4, 5];  // Monday to Friday
-    rule.tz = 'Asia/Kolkata';  
+    rule.tz = 'UTC';   // Explicitly set timezone to UTC
     schedule.scheduleJob(rule, async () => {
         console.log(`Running Jira feed job at ${new Date().toLocaleString()}`);
         try {
@@ -204,6 +212,9 @@ const scheduleJiraFeedJob = () => {
     console.log('Jira feed job scheduled');
 };
 
+
+// Scheduled-Run
 scheduleJiraFeedJob();
 
+// Run-On-Start
 // getDailyFeedsFromJira()

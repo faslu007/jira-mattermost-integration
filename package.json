@@ -12,6 +12,8 @@
   "license": "ISC",
   "dependencies": {
     "dotenv": "^16.4.7",
-    "node-schedule": "^2.1.1"
+    "form-data": "^4.0.2",
+    "node-schedule": "^2.1.1",
+    "quickchart-js": "^3.1.3"
   }
 }

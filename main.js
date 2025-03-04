@@ -1,5 +1,10 @@
 const dotenv = require('dotenv').config();
 const schedule = require('node-schedule');
+const { createBugAnalyticsChart, createMultiLineBugChart } = require('./getJiraMonthlyBugAnalytics');
+const fs = require('fs');
+const FormData = require('form-data');
+const fetch = require('node-fetch');
+const { sendChartsToMattermost } = require('./main'); // Ensure this is correctly imported
 
 
 const getDailyFeedsFromJira = async () => {
@@ -168,6 +173,7 @@ const postMessageToMatterMostChannel = async (channel, payload) => {
                 channel_id: channel,
                 "username": "test-automation",
                 message: payload?.text ?? "TEST FROM BOT JS",
+                file_ids: payload.file_ids ?? [],
                 props: {
                     from_bot: true,
                     override_username: "Jira Bot",
@@ -189,19 +195,83 @@ const postMessageToMatterMostChannel = async (channel, payload) => {
     }
 };
 
+
+const uploadFileToMattermost = async (channel, filePath) => {
+    const mattermostUrl = process.env.MATTERMOST_URL;
+    const apiToken = process.env.MATTERMOST_TOKEN;
+
+    if (!mattermostUrl || !apiToken) {
+        throw new Error('Mattermost URL or API token not configured');
+    }
+
+    const formData = new FormData();
+    formData.append('files', fs.readFileSync(filePath), {
+        filename: filePath.split('/').pop(),
+        contentType: 'application/octet-stream'
+    });
+    formData.append('channel_id', channel);
+
+    const response = await fetch(`${mattermostUrl}/api/v4/files`, {
+        method: 'POST',
+        headers: {
+            'Authorization': `Bearer ${apiToken}`,
+            ...formData.getHeaders()
+        },
+        body: formData
+    });
+
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Failed to upload file to Mattermost: ${errorData.message || response.statusText}`);
+    }
+
+    const responseData = await response.json();
+    return responseData.file_infos.map(fileInfo => fileInfo.id);
+};
+
+const sendChartsToMattermost = async () => {
+    try {
+        const channel = process.env.CHANNEL;
+        const chartFiles = ['./bug-analytics-chart.png', './multi-line-bug-chart.png'];
+
+        const uploadedFileIds = [];
+
+        for (const file of chartFiles) {
+            const fileIds = await uploadFileToMattermost(channel, file);
+            if (fileIds.length) {
+                fileIds.forEach(fileItem => {
+                    uploadedFileIds.push(fileItem)
+                });
+            }
+        }
+
+        if (uploadedFileIds.length) {
+            const payload = {
+                text: `Here is the chart monthly Bug Analytics.`,
+                file_ids: uploadedFileIds
+            };
+            await postMessageToMatterMostChannel(channel, payload);
+        }
+    } catch (error) {
+        console.error('Error sending charts to Mattermost:', error);
+    }
+};
+
+
+
+
+
 // Schedule the job to run at 11:45:00 UTC
 const scheduleJiraFeedJob = () => {
     const rule = new schedule.RecurrenceRule();
     rule.hour = 14;    // 11 AM UTC
-    rule.minute = 0;  // 30 minutes
+    rule.minute = 13;  // 30 minutes
     rule.second = 0;   // 0 seconds
     rule.dayOfWeek = [1, 2, 3, 4, 5];  // Monday to Friday
     rule.tz = 'UTC';   // Explicitly set timezone to UTC
     schedule.scheduleJob(rule, async () => {
         console.log(`Running Jira feed job at ${new Date().toLocaleString()}`);
         try {
-            console.log('test')
-            console.log(process.env.JIRA_URI)
             await getDailyFeedsFromJira();
             console.log('Jira feed job completed successfully');
         } catch (error) {
@@ -212,9 +282,42 @@ const scheduleJiraFeedJob = () => {
     console.log('Jira feed job scheduled');
 };
 
+const scheduleMonthlyJob = () => {
+    const rule = new schedule.RecurrenceRule();
+    rule.hour = 23; // 11 PM UTC
+    rule.minute = 59; // 59 minutes
+    rule.second = 0; // 0 seconds
+    rule.tz = 'UTC'; // Explicitly set timezone to UTC
 
-// Scheduled-Run
+    // Function to determine the last day of the current month
+    const getLastDayOfMonth = () => {
+        const date = new Date();
+        const lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0);
+        return lastDay.getDate();
+    };
+
+    // Schedule the job to run on the last day of the month
+    schedule.scheduleJob({ ...rule, date: getLastDayOfMonth() }, async () => {
+        console.log(`Running monthly job at ${new Date().toLocaleString()}`);
+        try {
+            await createBugAnalyticsChart();
+            await createMultiLineBugChart();
+            await sendChartsToMattermost();
+            console.log('Monthly job completed successfully');
+        } catch (error) {
+            console.error('Error in monthly job:', error);
+        }
+    });
+
+    console.log('Monthly job scheduled');
+};
+
+// Call the function to schedule the job
+scheduleMonthlyJob();
+
+// Schedule the job to run at 11:45:00 UTC
 scheduleJiraFeedJob();
 
 // Run-On-Start
 // getDailyFeedsFromJira()
+// createBugAnalyticsChart().then(() => createMultiLineBugChart()).then(() => sendChartsToMattermost());
